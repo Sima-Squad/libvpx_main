@@ -66,10 +66,40 @@ void usage_exit(void) {
   exit(EXIT_FAILURE);
 }
 
+typedef struct {
+  double frame;
+  double weight;
+  double intra_error;
+  double coded_error;
+  double sr_coded_error;
+  double frame_noise_energy;
+  double pcnt_inter;
+  double pcnt_motion;
+  double pcnt_second_ref;
+  double pcnt_neutral;
+  double pcnt_intra_low;   // Coded intra but low variance
+  double pcnt_intra_high;  // Coded intra high variance
+  double intra_skip_pct;
+  double intra_smooth_pct;    // % of blocks that are smooth
+  double inactive_zone_rows;  // Image mask rows top and bottom.
+  double inactive_zone_cols;  // Image mask columns at left and right edges.
+  double MVr;
+  double mvr_abs;
+  double MVc;
+  double mvc_abs;
+  double MVrv;
+  double MVcv;
+  double mv_in_out_count;
+  double duration;
+  double count;
+  double new_mv_count; // not used in first pass features
+  int64_t spatial_layer_id; // not used in first pass features
+} FIRSTPASS_STATS;
+
 static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                            vpx_codec_pts_t pts, unsigned int duration,
                            vpx_enc_frame_flags_t flags, unsigned int deadline,
-                           vpx_fixed_buf_t *stats) {
+                           vpx_fixed_buf_t *stats, int frame_count) {
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
@@ -87,7 +117,13 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       if (!stats->buf) die("Failed to reallocate stats buffer.");
       memcpy((uint8_t *)stats->buf + stats->sz, pkt_buf, pkt_size);
       stats->sz += pkt_size;
+
+      FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
+      printf("Frame %d: Intra Error: %.2f, Coded Error: %.2f, Frame Noise Energy: %.2f, count: %.2f\n",
+              frame_count, fps_stats->intra_error, fps_stats->coded_error, fps_stats->frame_noise_energy, fps_stats->count);
     }
+
+
   }
 
   return got_pkts;
@@ -121,6 +157,7 @@ static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   return got_pkts;
 }
 
+// first pass to collect stats 
 static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
                              const VpxInterface *encoder,
                              const vpx_codec_enc_cfg_t *cfg, int max_frames) {
@@ -135,13 +172,13 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
     get_frame_stats(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                    &stats);
+                    &stats, frame_count);
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
   // Flush encoder.
   while (get_frame_stats(&codec, NULL, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                         &stats)) {
+                         &stats, frame_count)) {
   }
 
   printf("Pass 0 complete. Processed %d frames.\n", frame_count);
@@ -150,6 +187,7 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   return stats;
 }
 
+// second pass to encode frames from stats
 static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
                   const VpxInterface *encoder, const vpx_codec_enc_cfg_t *cfg,
                   int max_frames) {
@@ -196,6 +234,9 @@ int main(int argc, char **argv) {
   vpx_image_t raw;
   vpx_codec_err_t res;
   vpx_fixed_buf_t stats;
+
+  FIRSTPASS_STATS example_stats;
+  printf("Size of FIRSTPASS_STATS object: %zu bytes\n", sizeof(example_stats));
 
   const VpxInterface *encoder = NULL;
   const int fps = 30;       // TODO(dkovalev) add command line argument
