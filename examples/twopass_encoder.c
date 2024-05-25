@@ -55,6 +55,7 @@
 
 #include "../tools_common.h"
 #include "../video_writer.h"
+#include "vpx/vpx_codec.h"
 
 static const char *exec_name;
 
@@ -129,6 +130,21 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   return got_pkts;
 }
 
+static int update_encoder_config(vpx_codec_ctx_t *ctx, int min_quantizer, int max_quantizer) {
+    if (!ctx || !ctx->config.enc) return -1;
+
+    vpx_codec_enc_cfg_t *cfg_copy = malloc(sizeof(vpx_codec_enc_cfg_t));
+    if (!cfg_copy) return -1;
+    memcpy(cfg_copy, ctx->config.enc, sizeof(vpx_codec_enc_cfg_t));
+
+    cfg_copy->rc_min_quantizer = min_quantizer;
+    cfg_copy->rc_max_quantizer = max_quantizer;
+
+    vpx_codec_err_t res = vpx_codec_enc_init(ctx, ctx->iface, cfg_copy, ctx->init_flags);
+    free(cfg_copy);
+    return (res == VPX_CODEC_OK) ? 0 : -1;
+}
+
 static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                         vpx_codec_pts_t pts, unsigned int duration,
                         vpx_enc_frame_flags_t flags, unsigned int deadline,
@@ -136,6 +152,19 @@ static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
+
+  // set quantization level to 32
+
+  // if (vpx_codec_control(&ctx, VP8E_SET_CQ_LEVEL, 32)) {
+  //   die_codec(ctx, "Failed to set quantization level.");
+  // }
+
+  if (update_encoder_config(ctx, 32, 32) != 0) {
+      die_codec(ctx, "Failed to update encoder configuration.");
+  } else {
+      printf("Updated encoder configuration.\n");
+  }
+
   const vpx_codec_err_t res =
       vpx_codec_encode(ctx, img, pts, duration, flags, deadline);
   if (res != VPX_CODEC_OK) die_codec(ctx, "Failed to encode frame.");

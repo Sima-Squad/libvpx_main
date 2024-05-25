@@ -193,6 +193,7 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                                  vpx_codec_pts_t pts, unsigned long duration,
                                  vpx_enc_frame_flags_t flags,
                                  vpx_enc_deadline_t deadline) {
+
   vpx_codec_err_t res = VPX_CODEC_OK;
 
   if (!ctx || (img && !duration))
@@ -206,6 +207,11 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
     res = VPX_CODEC_INVALID_PARAM;
 #endif
   else {
+    // if (ctx->config.enc) {
+    //   printf("rc_min_quantizer = %d\n", ctx->config.enc->rc_min_quantizer);
+    //   printf("rc_max_quantizer = %d\n", ctx->config.enc->rc_max_quantizer);
+    // }
+
     unsigned int num_enc = ctx->priv->enc.total_encoders;
 
     /* Execute in a normalized floating point environment, if the platform
