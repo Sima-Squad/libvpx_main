@@ -67,6 +67,7 @@ void usage_exit(void) {
   exit(EXIT_FAILURE);
 }
 
+// storing first pass stats
 typedef struct {
   double frame;
   double weight;
@@ -98,6 +99,33 @@ typedef struct {
 } FIRSTPASS_STATS;
 
 typedef struct {
+    FIRSTPASS_STATS* stats;
+    size_t size;
+    size_t capacity;
+} StatsArray;
+
+StatsArray sa;
+
+void initStatsArray(size_t initialCapacity) {
+    sa.stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
+    sa.size = 0;
+    sa.capacity = initialCapacity;
+}
+
+void addStat(FIRSTPASS_STATS stat) {
+    if (sa.size == sa.capacity) {
+        sa.capacity *= 2;
+        sa.stats = (FIRSTPASS_STATS*) realloc(sa.stats, sa.capacity * sizeof(FIRSTPASS_STATS));
+    }
+    sa.stats[sa.size++] = stat;
+}
+
+void freeStatsArray() {
+    free(sa.stats);
+}
+
+// defining a global file reader to read frames from a file
+typedef struct {
     FILE *file;
 } GlobalFileReader;
 
@@ -105,6 +133,7 @@ GlobalFileReader glob_reader = {NULL};
 int glob_frame_counter = 0;
 
 void set_global_file_reader(const char *filename) {
+    freeStatsArray();
     if (glob_reader.file != NULL) {
         fclose(glob_reader.file);
     }
@@ -124,7 +153,7 @@ int read_frame_glob(vpx_image_t *img) {
     return vpx_img_read(img, glob_reader.file);
 }
 
-
+// orig functions begin now...
 static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                            vpx_codec_pts_t pts, unsigned int duration,
                            vpx_enc_frame_flags_t flags, unsigned int deadline,
@@ -148,10 +177,10 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       stats->sz += pkt_size;
 
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
-      printf("Frame %.2f: Intra Error: %.2f, Coded Error: %.2f, Frame Noise Energy: %.2f\n",
-              fps_stats->count, fps_stats->intra_error, fps_stats->coded_error, fps_stats->frame_noise_energy);
-    }
 
+      // add to stats array
+      // addStat(*fps_stats);
+    }
 
   }
 
@@ -181,12 +210,11 @@ static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
 
-  // temporarily setting 32 as fixed value 
-  if (update_encoder_config(ctx, 32, 32) != 0) {
-      die_codec(ctx, "Failed to update encoder configuration.");
-  } else {
-      printf("Updated encoder configuration.\n");
-  }
+  // // temporarily setting 32 as fixed value 
+  // if (update_encoder_config(ctx, 32, 32) != 0) {
+  //     die_codec(ctx, "Failed to update encoder configuration.");
+  // } 
+
 
   const vpx_codec_err_t res =
       vpx_codec_encode(ctx, img, pts, duration, flags, deadline);
@@ -216,6 +244,9 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   vpx_codec_ctx_t codec;
   int frame_count = 0;
   vpx_fixed_buf_t stats = { NULL, 0 };
+
+  // initialize stats array
+  initStatsArray(10);
 
   if (vpx_codec_enc_init(&codec, encoder->codec_interface(), cfg, 0))
     die("Failed to initialize encoder");
