@@ -124,6 +124,15 @@ void addStat(FIRSTPASS_STATS stat) {
     sa.stats[sa.size++] = stat;
 }
 
+void removeStat(size_t index) {
+    if (index < sa.size) {
+        for (size_t i = index; i < sa.size - 1; i++) {
+            sa.stats[i] = sa.stats[i + 1];
+        }
+        sa.size--;
+    }
+}
+
 void freeStatsArray() {
     free(sa.stats);
 }
@@ -183,7 +192,7 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
 
       // add to stats array
-      // addStat(*fps_stats);
+      addStat(*fps_stats);
     }
 
   }
@@ -254,6 +263,9 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
 
   printf("Pass 0 complete. Processed %d frames.\n", frame_count);
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
+
+  // remove the last stat as it is not a frame stat
+  removeStat(sa.size - 1);
 
   return stats;
 }
@@ -352,6 +364,13 @@ int main(int argc, char **argv) {
   // Pass 0
   cfg.g_pass = VPX_RC_FIRST_PASS;
   stats = pass0(&raw, infile, encoder, &cfg, max_frames);
+
+  printf("printing stats");
+  // print stats
+  for (int i = 0; i < sa.size; i++) {
+      FIRSTPASS_STATS stat = sa.stats[i];
+      printf("Frame: %f\n", stat.frame);
+  }
 
   // Pass 1
   rewind(infile);
