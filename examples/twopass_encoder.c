@@ -97,10 +97,38 @@ typedef struct {
   int64_t spatial_layer_id; // not used in first pass features
 } FIRSTPASS_STATS;
 
+typedef struct {
+    FILE *file;
+} GlobalFileReader;
+
+GlobalFileReader glob_reader = {NULL}; 
+int glob_frame_counter = 0;
+
+void set_global_file_reader(const char *filename) {
+    if (glob_reader.file != NULL) {
+        fclose(glob_reader.file);
+    }
+    glob_reader.file = fopen(filename, "rb");
+    if (!glob_reader.file) {
+        fprintf(stderr, "Failed to open %s for reading\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    printf("File set to %s\n", filename);
+}
+
+int read_frame_glob(vpx_image_t *img) {
+    if (!glob_reader.file) {
+        fprintf(stderr, "File not set\n");
+        return 0;
+    }
+    return vpx_img_read(img, glob_reader.file);
+}
+
+
 static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                            vpx_codec_pts_t pts, unsigned int duration,
                            vpx_enc_frame_flags_t flags, unsigned int deadline,
-                           vpx_fixed_buf_t *stats, int frame_count) {
+                           vpx_fixed_buf_t *stats) {
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
@@ -120,8 +148,8 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       stats->sz += pkt_size;
 
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
-      printf("Frame %d: Intra Error: %.2f, Coded Error: %.2f, Frame Noise Energy: %.2f, count: %.2f\n",
-              frame_count, fps_stats->intra_error, fps_stats->coded_error, fps_stats->frame_noise_energy, fps_stats->count);
+      printf("Frame %.2f: Intra Error: %.2f, Coded Error: %.2f, Frame Noise Energy: %.2f\n",
+              fps_stats->count, fps_stats->intra_error, fps_stats->coded_error, fps_stats->frame_noise_energy);
     }
 
 
@@ -153,12 +181,7 @@ static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
 
-  // set quantization level to 32
-
-  // if (vpx_codec_control(&ctx, VP8E_SET_CQ_LEVEL, 32)) {
-  //   die_codec(ctx, "Failed to set quantization level.");
-  // }
-
+  // temporarily setting 32 as fixed value 
   if (update_encoder_config(ctx, 32, 32) != 0) {
       die_codec(ctx, "Failed to update encoder configuration.");
   } else {
@@ -201,13 +224,13 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
     get_frame_stats(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                    &stats, frame_count);
+                    &stats);
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
   // Flush encoder.
   while (get_frame_stats(&codec, NULL, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                         &stats, frame_count)) {
+                         &stats)) {
   }
 
   printf("Pass 0 complete. Processed %d frames.\n", frame_count);
@@ -255,6 +278,7 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
 }
 
+
 int main(int argc, char **argv) {
   FILE *infile = NULL;
   int w, h;
@@ -263,9 +287,6 @@ int main(int argc, char **argv) {
   vpx_image_t raw;
   vpx_codec_err_t res;
   vpx_fixed_buf_t stats;
-
-  FIRSTPASS_STATS example_stats;
-  printf("Size of FIRSTPASS_STATS object: %zu bytes\n", sizeof(example_stats));
 
   const VpxInterface *encoder = NULL;
   const int fps = 30;       // TODO(dkovalev) add command line argument
