@@ -138,6 +138,7 @@ void freeStatsArray(StatsArray *sa) {
 }
 
 typedef struct {
+    int got_pkts;
     double psnr;
     double bitrate;
 } EncodingResult;
@@ -208,40 +209,43 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 }
 
 
-static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
+static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                         vpx_codec_pts_t pts, unsigned int duration,
                         vpx_enc_frame_flags_t flags, unsigned int deadline,
-                        VpxVideoWriter *writer, int qp, bool set_qp) {
-  int got_pkts = 0;
+                        VpxVideoWriter *writer, int qp, bool set_qp, bool write_to_file) {
+  EncodingResult result = {0};
+  result.got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
 
+  // controlling QP
   if (set_qp) {
     if (vpx_codec_control(ctx, VP8E_SET_CQ_LEVEL, qp)) {
       fprintf(stderr, "Failed to set constant quantization level\n");
     }
   }
 
-
   const vpx_codec_err_t res =
       vpx_codec_encode(ctx, img, pts, duration, flags, deadline);
   if (res != VPX_CODEC_OK) die_codec(ctx, "Failed to encode frame.");
 
   while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL) {
-    got_pkts = 1;
-    if (pkt->kind == VPX_CODEC_CX_FRAME_PKT) {
-      const int keyframe = (pkt->data.frame.flags & VPX_FRAME_IS_KEY) != 0;
+    result.got_pkts = 1;
+    if (write_to_file) {
+      if (pkt->kind == VPX_CODEC_CX_FRAME_PKT) {
+        const int keyframe = (pkt->data.frame.flags & VPX_FRAME_IS_KEY) != 0;
 
-      if (!vpx_video_writer_write_frame(writer, pkt->data.frame.buf,
-                                        pkt->data.frame.sz,
-                                        pkt->data.frame.pts))
-        die_codec(ctx, "Failed to write compressed frame.");
-      printf(keyframe ? "K" : ".");
-      fflush(stdout);
-    }
+        if (!vpx_video_writer_write_frame(writer, pkt->data.frame.buf,
+                                          pkt->data.frame.sz,
+                                          pkt->data.frame.pts))
+          die_codec(ctx, "Failed to write compressed frame.");
+        printf(keyframe ? "K" : ".");
+        fflush(stdout);
+      }
+    } 
   }
 
-  return got_pkts;
+  return result;
 }
 
 // first pass to collect stats 
@@ -298,14 +302,16 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   // Encode frames.
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
-    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false);
+    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false, true);
 
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
-  // Flush encoder.
-  while (encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false)) {
-  }
+  // flush encoder 
+  EncodingResult res;
+  do {
+    res = encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false, true);
+  } while (res.got_pkts);
 
   printf("\n");
 
@@ -373,6 +379,8 @@ double calculate_bitrate() {
 EncodingResult encode_frame_external(int qp) {
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
+    ++glob_frame_counter;
+    encode_frame(&enc_context.codec, &enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
     result.psnr = calculate_psnr();
     result.bitrate = calculate_bitrate(); 
     return result;
@@ -394,8 +402,10 @@ void finalize_encoder(void) {
     vpx_img_free(&enc_context.raw);
 
     // flush encoder -- CHECK writer param (before 32)
-    while (encode_frame(&enc_context.codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, NULL, 32, false)) {
-    }
+    EncodingResult res;
+    do {
+        res = encode_frame(&enc_context.codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, NULL, 32, false, false);
+    } while (res.got_pkts);
 
     if (vpx_codec_destroy(&enc_context.codec)) die_codec(&enc_context.codec, "Failed to destroy codec.");
 }
