@@ -108,33 +108,32 @@ typedef struct {
     size_t capacity;
 } StatsArray;
 
-StatsArray sa;
 
-void initStatsArray(size_t initialCapacity) {
-    sa.stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
-    sa.size = 0;
-    sa.capacity = initialCapacity;
-}
-
-void addStat(FIRSTPASS_STATS stat) {
-    if (sa.size == sa.capacity) {
-        sa.capacity *= 2;
-        sa.stats = (FIRSTPASS_STATS*) realloc(sa.stats, sa.capacity * sizeof(FIRSTPASS_STATS));
+void addStat(StatsArray *sa, FIRSTPASS_STATS stat) {
+    if (sa->size == sa->capacity) {
+        sa->capacity *= 2;
+        sa->stats = (FIRSTPASS_STATS*) realloc(sa->stats, sa->capacity * sizeof(FIRSTPASS_STATS));
     }
-    sa.stats[sa.size++] = stat;
+    sa->stats[sa->size++] = stat;
 }
 
-void removeStat(size_t index) {
-    if (index < sa.size) {
-        for (size_t i = index; i < sa.size - 1; i++) {
-            sa.stats[i] = sa.stats[i + 1];
+void removeStat(StatsArray *sa, size_t index) {
+    if (index < sa->size) {
+        for (size_t i = index; i < sa->size - 1; i++) {
+            sa->stats[i] = sa->stats[i + 1];
         }
-        sa.size--;
+        sa->size--;
     }
 }
 
-void freeStatsArray() {
-    free(sa.stats);
+void initStatsArray(StatsArray *sa, size_t initialCapacity) {
+    sa->stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
+    sa->size = 0;
+    sa->capacity = initialCapacity;
+}
+
+void freeStatsArray(StatsArray *sa) {
+    free(sa->stats);
 }
 
 typedef struct {
@@ -143,83 +142,13 @@ typedef struct {
 } EncodingResult;
 
 // function prototypes for python interaction
-void initialize_encoder(const char *infile, int width, int height);
+StatsArray initialize_encoder(const char *infile, int width, int height);
 EncodingResult encode_frame_external(int qp);
 void finalize_encoder(void);
-
-void initialize_encoder(const char *infile, int width, int height) {
-    set_global_file_reader(infile);
-
-    int w, h;
-    vpx_codec_ctx_t codec;
-    vpx_codec_enc_cfg_t cfg;
-    vpx_image_t raw;
-    vpx_codec_err_t res;
-    vpx_fixed_buf_t stats;
-    const int fps = 30;
-    const int bitrate = 200;
-    const char *const codec_arg = "vp9";
-    w = width;
-    h = height;
-
-    const VpxInterface *encoder = get_vpx_encoder_by_name(codec_arg);
-    if (!encoder) die("Unsupported codec.");
-
-    if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
-        die("Invalid frame size: %dx%d", w, h);
-
-    if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
-        die("Failed to allocate image (%dx%d)", w, h);
-
-    printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
-
-    // Configuration
-    res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
-    if (res) die_codec(&codec, "Failed to get default codec config.");
-
-    cfg.g_w = w;
-    cfg.g_h = h;
-    cfg.g_timebase.num = 1;
-    cfg.g_timebase.den = fps;
-    cfg.rc_target_bitrate = bitrate;
-
-    // pass 0
-    cfg.g_pass = VPX_RC_FIRST_PASS;
-    stats = pass0(&raw, glob_reader.file, encoder, &cfg, 0);
-
-    // setup for pass 1
-    rewind(glob_reader.file);
-    cfg.g_pass = VPX_RC_LAST_PASS;
-    cfg.rc_twopass_stats_in = stats;
-
-    // return stats 
-}
-
-EncodingResult encode_frame_external(int qp) {
-    // Set the quantization parameter
-    // Encode the frame
-    // Calculate PSNR and bitrate
-    // Return results to Python
-    EncodingResult result;
-    result.psnr = calculate_psnr();  // Function to implement PSNR calculation
-    result.bitrate = calculate_bitrate();  // Function to implement bitrate calculation
-    return result;
-}
-
-void finalize_encoder(void) {
-    // Clean-up code
-    // Close files, free memory, destroy codec instances
-
-    freeStatsArray();
-    if (glob_reader.file != NULL) {
-        fclose(glob_reader.file);
-    }
-    glob_reader.file = NULL;
-    glob_frame_counter = 0;
-    // vpx_img_free(&raw);
-    // to be continued
-}
-
+vpx_codec_enc_cfg_t cfg;
+vpx_image_t raw;
+vpx_fixed_buf_t stats;
+StatsArray sa;
 
 // defining a global file reader to read frames from a file
 typedef struct {
@@ -229,8 +158,30 @@ typedef struct {
 GlobalFileReader glob_reader = {NULL}; 
 int glob_frame_counter = 0;
 
+EncodingResult encode_frame_external(int qp) {
+    // setting qp, performing encoding, and sending metrics back to python
+    EncodingResult result;
+    // result.psnr = calculate_psnr();
+    // result.bitrate = calculate_bitrate(); 
+    return result;
+}
+
+void finalize_encoder(void) {
+    // memory cleaning: close files, free memory, destroy codec instances
+
+    freeStatsArray(&sa);
+    if (glob_reader.file != NULL) {
+        fclose(glob_reader.file);
+    }
+    glob_reader.file = NULL;
+    glob_frame_counter = 0;
+    free(stats.buf);
+    // vpx_img_free(&raw);
+    // to be continued
+}
+
 void set_global_file_reader(const char *filename) {
-    freeStatsArray();
+    freeStatsArray(&sa);
     if (glob_reader.file != NULL) {
         fclose(glob_reader.file);
     }
@@ -246,7 +197,7 @@ void set_global_file_reader(const char *filename) {
 static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                            vpx_codec_pts_t pts, unsigned int duration,
                            vpx_enc_frame_flags_t flags, unsigned int deadline,
-                           vpx_fixed_buf_t *stats) {
+                           vpx_fixed_buf_t *stats, StatsArray *sa) {
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
@@ -268,7 +219,7 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
 
       // add to stats array
-      addStat(*fps_stats);
+      addStat(sa, *fps_stats);
     }
 
   }
@@ -313,13 +264,10 @@ static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 // first pass to collect stats 
 static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
                              const VpxInterface *encoder,
-                             const vpx_codec_enc_cfg_t *cfg, int max_frames) {
+                             const vpx_codec_enc_cfg_t *cfg, int max_frames, StatsArray *sa) {
   vpx_codec_ctx_t codec;
   int frame_count = 0;
   vpx_fixed_buf_t stats = { NULL, 0 };
-
-  // initialize stats array
-  initStatsArray(10);
 
   if (vpx_codec_enc_init(&codec, encoder->codec_interface(), cfg, 0))
     die("Failed to initialize encoder");
@@ -328,22 +276,68 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
     get_frame_stats(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                    &stats);
+                    &stats, sa);
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
   // Flush encoder.
   while (get_frame_stats(&codec, NULL, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                         &stats)) {
+                         &stats, sa)) {
   }
 
   printf("Pass 0 complete. Processed %d frames.\n", frame_count);
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
 
   // remove the last stat as it is not a frame stat
-  removeStat(sa.size - 1);
+  removeStat(sa, sa->size - 1);
 
   return stats;
+}
+
+StatsArray initialize_encoder(const char *infile, int width, int height) {
+    set_global_file_reader(infile);
+
+    int w, h;
+    vpx_codec_ctx_t codec;
+    vpx_codec_err_t res;
+    
+    const int fps = 30;
+    const int bitrate = 200;
+    const char *const codec_arg = "vp9";
+    w = width;
+    h = height;
+
+    const VpxInterface *encoder = get_vpx_encoder_by_name(codec_arg);
+    if (!encoder) die("Unsupported codec.");
+
+    if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
+        die("Invalid frame size: %dx%d", w, h);
+
+    if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
+        die("Failed to allocate image (%dx%d)", w, h);
+
+    printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
+
+    // Configuration
+    res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
+    if (res) die_codec(&codec, "Failed to get default codec config.");
+
+    cfg.g_w = w;
+    cfg.g_h = h;
+    cfg.g_timebase.num = 1;
+    cfg.g_timebase.den = fps;
+    cfg.rc_target_bitrate = bitrate;
+
+    // pass 0
+    cfg.g_pass = VPX_RC_FIRST_PASS;
+    stats = pass0(&raw, glob_reader.file, encoder, &cfg, 0, &sa);
+
+    // setup for pass 1
+    rewind(glob_reader.file);
+    cfg.g_pass = VPX_RC_LAST_PASS;
+    cfg.rc_twopass_stats_in = stats;
+
+    return sa;
 }
 
 // second pass to encode frames from stats
@@ -385,72 +379,76 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
 }
 
-
-
-int main(int argc, char **argv) {
-  FILE *infile = NULL;
-  int w, h;
-  vpx_codec_ctx_t codec;
-  vpx_codec_enc_cfg_t cfg;
-  vpx_image_t raw;
-  vpx_codec_err_t res;
-  vpx_fixed_buf_t stats;
-
-  const VpxInterface *encoder = NULL;
-  const int fps = 30;       // TODO(dkovalev) add command line argument
-  const int bitrate = 200;  // kbit/s TODO(dkovalev) add command line argument
-  const char *const codec_arg = argv[1];
-  const char *const width_arg = argv[2];
-  const char *const height_arg = argv[3];
-  const char *const infile_arg = argv[4];
-  const char *const outfile_arg = argv[5];
-  int max_frames = 0;
-  exec_name = argv[0];
-
-  if (argc != 7) die("Invalid number of arguments.");
-
-  max_frames = (int)strtol(argv[6], NULL, 0);
-
-  encoder = get_vpx_encoder_by_name(codec_arg);
-  if (!encoder) die("Unsupported codec.");
-
-  w = (int)strtol(width_arg, NULL, 0);
-  h = (int)strtol(height_arg, NULL, 0);
-
-  if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
-    die("Invalid frame size: %dx%d", w, h);
-
-  if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
-    die("Failed to allocate image (%dx%d)", w, h);
-
-  printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
-
-  // Configuration
-  res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
-  if (res) die_codec(&codec, "Failed to get default codec config.");
-
-  cfg.g_w = w;
-  cfg.g_h = h;
-  cfg.g_timebase.num = 1;
-  cfg.g_timebase.den = fps;
-  cfg.rc_target_bitrate = bitrate;
-
-  if (!(infile = fopen(infile_arg, "rb")))
-    die("Failed to open %s for reading", infile_arg);
-
-  // Pass 0
-  cfg.g_pass = VPX_RC_FIRST_PASS;
-  stats = pass0(&raw, infile, encoder, &cfg, max_frames);
-
-  // Pass 1
-  rewind(infile);
-  cfg.g_pass = VPX_RC_LAST_PASS;
-  cfg.rc_twopass_stats_in = stats;
-  pass1(&raw, infile, outfile_arg, encoder, &cfg, max_frames);
-  free(stats.buf);
-
-  vpx_img_free(&raw);
-  fclose(infile);
-
-  return EXIT_SUCCESS;
+int main() {
+  printf("dummy print");
 }
+
+
+// int main(int argc, char **argv) {
+//   FILE *infile = NULL;
+//   int w, h;
+//   vpx_codec_ctx_t codec;
+//   vpx_codec_enc_cfg_t cfg;
+//   vpx_image_t raw;
+//   vpx_codec_err_t res;
+//   vpx_fixed_buf_t stats;
+
+//   const VpxInterface *encoder = NULL;
+//   const int fps = 30;       // TODO(dkovalev) add command line argument
+//   const int bitrate = 200;  // kbit/s TODO(dkovalev) add command line argument
+//   const char *const codec_arg = argv[1];
+//   const char *const width_arg = argv[2];
+//   const char *const height_arg = argv[3];
+//   const char *const infile_arg = argv[4];
+//   const char *const outfile_arg = argv[5];
+//   int max_frames = 0;
+//   exec_name = argv[0];
+//   StatsArray sa;
+
+//   if (argc != 7) die("Invalid number of arguments.");
+
+//   max_frames = (int)strtol(argv[6], NULL, 0);
+
+//   encoder = get_vpx_encoder_by_name(codec_arg);
+//   if (!encoder) die("Unsupported codec.");
+
+//   w = (int)strtol(width_arg, NULL, 0);
+//   h = (int)strtol(height_arg, NULL, 0);
+
+//   if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
+//     die("Invalid frame size: %dx%d", w, h);
+
+//   if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
+//     die("Failed to allocate image (%dx%d)", w, h);
+
+//   printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
+
+//   // Configuration
+//   res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
+//   if (res) die_codec(&codec, "Failed to get default codec config.");
+
+//   cfg.g_w = w;
+//   cfg.g_h = h;
+//   cfg.g_timebase.num = 1;
+//   cfg.g_timebase.den = fps;
+//   cfg.rc_target_bitrate = bitrate;
+
+//   if (!(infile = fopen(infile_arg, "rb")))
+//     die("Failed to open %s for reading", infile_arg);
+
+//   // Pass 0
+//   cfg.g_pass = VPX_RC_FIRST_PASS;
+//   stats = pass0(&raw, infile, encoder, &cfg, max_frames, &sa);
+
+//   // Pass 1
+//   rewind(infile);
+//   cfg.g_pass = VPX_RC_LAST_PASS;
+//   cfg.rc_twopass_stats_in = stats;
+//   pass1(&raw, infile, outfile_arg, encoder, &cfg, max_frames);
+//   free(stats.buf);
+
+//   vpx_img_free(&raw);
+//   fclose(infile);
+
+//   return EXIT_SUCCESS;
+// }
