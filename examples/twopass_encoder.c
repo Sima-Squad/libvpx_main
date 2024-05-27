@@ -110,7 +110,7 @@ typedef struct {
 } StatsArray;
 
 
-void addStat(StatsArray *sa, FIRSTPASS_STATS stat) {
+static void addStat(StatsArray *sa, FIRSTPASS_STATS stat) {
     if (sa->size == sa->capacity) {
         sa->capacity *= 2;
         sa->stats = (FIRSTPASS_STATS*) realloc(sa->stats, sa->capacity * sizeof(FIRSTPASS_STATS));
@@ -118,7 +118,7 @@ void addStat(StatsArray *sa, FIRSTPASS_STATS stat) {
     sa->stats[sa->size++] = stat;
 }
 
-void removeStat(StatsArray *sa, size_t index) {
+static void removeStat(StatsArray *sa, size_t index) {
     if (index < sa->size) {
         for (size_t i = index; i < sa->size - 1; i++) {
             sa->stats[i] = sa->stats[i + 1];
@@ -127,13 +127,13 @@ void removeStat(StatsArray *sa, size_t index) {
     }
 }
 
-void initStatsArray(StatsArray *sa, size_t initialCapacity) {
+static void initStatsArray(StatsArray *sa, size_t initialCapacity) {
     sa->stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
     sa->size = 0;
     sa->capacity = initialCapacity;
 }
 
-void freeStatsArray(StatsArray *sa) {
+static void freeStatsArray(StatsArray *sa) {
     free(sa->stats);
 }
 
@@ -142,6 +142,14 @@ typedef struct {
     double psnr;
     double bitrate;
 } EncodingResult;
+
+static double calculate_psnr(void) {
+  return 1.0;
+}
+
+static double calculate_bitrate(void) {
+  return 1.0;
+}
 
 // function prototypes for python interaction
 StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate);
@@ -163,7 +171,7 @@ typedef struct {
 EncoderContext enc_context = {NULL}; 
 
 
-void set_global_file_reader(const char *filename) {
+static void set_global_file_reader(const char *filename) {
     freeStatsArray(&sa);
     if (enc_context.infile != NULL) {
         fclose(enc_context.infile);
@@ -245,6 +253,9 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
     } 
   }
 
+  result.psnr = calculate_psnr();
+  result.bitrate = calculate_bitrate(); 
+
   return result;
 }
 
@@ -316,7 +327,6 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("\n");
 
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
-
   vpx_video_writer_close(writer);
 
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
@@ -339,7 +349,7 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
     if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
         die("Invalid frame size: %dx%d", w, h);
 
-    if (!vpx_img_alloc(&enc_context.raw, VPX_IMG_FMT_I420, w, h, 1))
+    if (!vpx_img_alloc(enc_context.raw, VPX_IMG_FMT_I420, w, h, 1))
         die("Failed to allocate image (%dx%d)", w, h);
 
     printf("Using %s\n", vpx_codec_iface_name(enc_context.encoder->codec_interface()));
@@ -356,7 +366,9 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 
     // pass 0
     enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
-    enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0, &sa);
+    printf("beginning pass 0\n");
+    enc_context.stats = pass0(enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0, &sa);
+    printf("completed pass 0\n"); 
 
     // setup for pass 1
     rewind(enc_context.infile);
@@ -368,21 +380,13 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
     return sa;
 }
 
-double calculate_psnr() {
-  return 1.0;
-}
 
-double calculate_bitrate() {
-  return 1.0;
-}
 
 EncodingResult encode_frame_external(int qp) {
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
     ++glob_frame_counter;
-    encode_frame(&enc_context.codec, &enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
-    result.psnr = calculate_psnr();
-    result.bitrate = calculate_bitrate(); 
+    result = encode_frame(&enc_context.codec, enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
     return result;
 }
 
@@ -399,7 +403,7 @@ void finalize_encoder(void) {
     enc_context.infile = NULL;
     glob_frame_counter = 0;
     free(enc_context.stats.buf);
-    vpx_img_free(&enc_context.raw);
+    vpx_img_free(enc_context.raw);
 
     // flush encoder -- CHECK writer param (before 32)
     EncodingResult res;
@@ -410,7 +414,11 @@ void finalize_encoder(void) {
     if (vpx_codec_destroy(&enc_context.codec)) die_codec(&enc_context.codec, "Failed to destroy codec.");
 }
 
-int main() {
-  printf("dummy print");
+int main(int argc, char **argv) {
+  const char *const file_name = argv[1];
+  const int width = (int)strtol(argv[2], NULL, 0);
+  const int height = (int)strtol(argv[3], NULL, 0);
+  exec_name = argv[0];
+  initialize_encoder(file_name, width, height, 200);
 }
 
