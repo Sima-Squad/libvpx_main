@@ -143,7 +143,7 @@ typedef struct {
 } EncodingResult;
 
 // function prototypes for python interaction
-StatsArray initialize_encoder(const char *infile, int width, int height);
+StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate);
 EncodingResult encode_frame_external(int qp);
 void finalize_encoder(void);
 StatsArray sa;
@@ -316,14 +316,13 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
 }
 
-StatsArray initialize_encoder(const char *infile, int width, int height) {
+StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate) {
     set_global_file_reader(infile);
 
     int w, h;
     vpx_codec_err_t res;
     
     const int fps = 30;
-    const int bitrate = 200;
     const char *const codec_arg = "vp9";
     w = width;
     h = height;
@@ -347,16 +346,18 @@ StatsArray initialize_encoder(const char *infile, int width, int height) {
     enc_context.cfg.g_h = h;
     enc_context.cfg.g_timebase.num = 1;
     enc_context.cfg.g_timebase.den = fps;
-    enc_context.cfg.rc_target_bitrate = bitrate;
+    enc_context.cfg.rc_target_bitrate = target_bitrate;
 
     // pass 0
     enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
     enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0, &sa);
 
-    // // setup for pass 1
+    // setup for pass 1
     rewind(enc_context.infile);
     enc_context.cfg.g_pass = VPX_RC_LAST_PASS;
     enc_context.cfg.rc_twopass_stats_in = enc_context.stats;
+    if (vpx_codec_enc_init(&enc_context.codec, enc_context.encoder->codec_interface(), &enc_context.cfg, 0))
+        die("Failed to initialize encoder");
 
     return sa;
 }
@@ -378,6 +379,10 @@ EncodingResult encode_frame_external(int qp) {
 }
 
 void finalize_encoder(void) {
+
+    printf("Pass 1 complete. Processed %d frames.\n", glob_frame_counter);
+    printf("Cleaning up...\n");
+
     // memory cleaning: close files, free memory, destroy codec instances
     freeStatsArray(&sa);
     if (enc_context.infile != NULL) {
@@ -387,7 +392,12 @@ void finalize_encoder(void) {
     glob_frame_counter = 0;
     free(enc_context.stats.buf);
     vpx_img_free(&enc_context.raw);
-    // anything else?
+
+    // flush encoder -- CHECK writer param (before 32)
+    while (encode_frame(&enc_context.codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, NULL, 32, false)) {
+    }
+
+    if (vpx_codec_destroy(&enc_context.codec)) die_codec(&enc_context.codec, "Failed to destroy codec.");
 }
 
 int main() {
