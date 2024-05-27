@@ -50,6 +50,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "vpx/vpx_encoder.h"
 
@@ -208,14 +209,17 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 static int encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                         vpx_codec_pts_t pts, unsigned int duration,
                         vpx_enc_frame_flags_t flags, unsigned int deadline,
-                        VpxVideoWriter *writer) {
+                        VpxVideoWriter *writer, int qp, bool set_qp) {
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
 
-  if (vpx_codec_control(ctx, VP8E_SET_CQ_LEVEL, 32)) {
+  if (set_qp) {
+    if (vpx_codec_control(ctx, VP8E_SET_CQ_LEVEL, qp)) {
       fprintf(stderr, "Failed to set constant quantization level\n");
+    }
   }
+
 
   const vpx_codec_err_t res =
       vpx_codec_encode(ctx, img, pts, duration, flags, deadline);
@@ -292,13 +296,13 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   // Encode frames.
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
-    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer);
+    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false);
 
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
   // Flush encoder.
-  while (encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer)) {
+  while (encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false)) {
   }
 
   printf("\n");
