@@ -146,27 +146,29 @@ typedef struct {
 StatsArray initialize_encoder(const char *infile, int width, int height);
 EncodingResult encode_frame_external(int qp);
 void finalize_encoder(void);
-vpx_codec_enc_cfg_t cfg;
-vpx_image_t raw;
-vpx_fixed_buf_t stats;
 StatsArray sa;
 
-// defining a global file reader to read frames from a file
-typedef struct {
-    FILE *file;
-} GlobalFileReader;
-
-GlobalFileReader glob_reader = {NULL}; 
 int glob_frame_counter = 0;
+
+typedef struct {
+    FILE *infile;
+    vpx_codec_ctx_t codec;
+    const VpxInterface *encoder;
+    vpx_image_t *raw;
+    vpx_codec_enc_cfg_t cfg;
+    vpx_fixed_buf_t stats;
+} EncoderContext;
+
+EncoderContext enc_context = {NULL}; 
 
 
 void set_global_file_reader(const char *filename) {
     freeStatsArray(&sa);
-    if (glob_reader.file != NULL) {
-        fclose(glob_reader.file);
+    if (enc_context.infile != NULL) {
+        fclose(enc_context.infile);
     }
-    glob_reader.file = fopen(filename, "rb");
-    if (!glob_reader.file) {
+    enc_context.infile = fopen(filename, "rb");
+    if (!enc_context.infile) {
         fprintf(stderr, "Failed to open %s for reading\n", filename);
         exit(EXIT_FAILURE);
     }
@@ -318,7 +320,6 @@ StatsArray initialize_encoder(const char *infile, int width, int height) {
     set_global_file_reader(infile);
 
     int w, h;
-    vpx_codec_ctx_t codec;
     vpx_codec_err_t res;
     
     const int fps = 30;
@@ -327,57 +328,66 @@ StatsArray initialize_encoder(const char *infile, int width, int height) {
     w = width;
     h = height;
 
-    const VpxInterface *encoder = get_vpx_encoder_by_name(codec_arg);
-    if (!encoder) die("Unsupported codec.");
+    enc_context.encoder = get_vpx_encoder_by_name(codec_arg);
+    if (!enc_context.encoder) die("Unsupported codec.");
 
     if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
         die("Invalid frame size: %dx%d", w, h);
 
-    if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
+    if (!vpx_img_alloc(&enc_context.raw, VPX_IMG_FMT_I420, w, h, 1))
         die("Failed to allocate image (%dx%d)", w, h);
 
-    printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
+    printf("Using %s\n", vpx_codec_iface_name(enc_context.encoder->codec_interface()));
 
     // Configuration
-    res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
-    if (res) die_codec(&codec, "Failed to get default codec config.");
-
-    cfg.g_w = w;
-    cfg.g_h = h;
-    cfg.g_timebase.num = 1;
-    cfg.g_timebase.den = fps;
-    cfg.rc_target_bitrate = bitrate;
+    res = vpx_codec_enc_config_default(enc_context.encoder->codec_interface(), &enc_context.cfg, 0);
+    if (res) die_codec(&enc_context.codec, "Failed to get default codec config.");
+    
+    enc_context.cfg.g_w = w;
+    enc_context.cfg.g_h = h;
+    enc_context.cfg.g_timebase.num = 1;
+    enc_context.cfg.g_timebase.den = fps;
+    enc_context.cfg.rc_target_bitrate = bitrate;
 
     // pass 0
-    cfg.g_pass = VPX_RC_FIRST_PASS;
-    stats = pass0(&raw, glob_reader.file, encoder, &cfg, 0, &sa);
+    enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
+    enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0, &sa);
 
-    // setup for pass 1
-    rewind(glob_reader.file);
-    cfg.g_pass = VPX_RC_LAST_PASS;
-    cfg.rc_twopass_stats_in = stats;
+    // // setup for pass 1
+    rewind(enc_context.infile);
+    enc_context.cfg.g_pass = VPX_RC_LAST_PASS;
+    enc_context.cfg.rc_twopass_stats_in = enc_context.stats;
 
     return sa;
+}
+
+double calculate_psnr() {
+  return 1.0;
+}
+
+double calculate_bitrate() {
+  return 1.0;
 }
 
 EncodingResult encode_frame_external(int qp) {
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
-    // result.psnr = calculate_psnr();
-    // result.bitrate = calculate_bitrate(); 
+    result.psnr = calculate_psnr();
+    result.bitrate = calculate_bitrate(); 
     return result;
 }
 
 void finalize_encoder(void) {
     // memory cleaning: close files, free memory, destroy codec instances
     freeStatsArray(&sa);
-    if (glob_reader.file != NULL) {
-        fclose(glob_reader.file);
+    if (enc_context.infile != NULL) {
+        fclose(enc_context.infile);
     }
-    glob_reader.file = NULL;
+    enc_context.infile = NULL;
     glob_frame_counter = 0;
-    free(stats.buf);
-    vpx_img_free(&raw);
+    free(enc_context.stats.buf);
+    vpx_img_free(&enc_context.raw);
+    // anything else?
 }
 
 int main() {
