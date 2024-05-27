@@ -158,27 +158,6 @@ typedef struct {
 GlobalFileReader glob_reader = {NULL}; 
 int glob_frame_counter = 0;
 
-EncodingResult encode_frame_external(int qp) {
-    // setting qp, performing encoding, and sending metrics back to python
-    EncodingResult result;
-    // result.psnr = calculate_psnr();
-    // result.bitrate = calculate_bitrate(); 
-    return result;
-}
-
-void finalize_encoder(void) {
-    // memory cleaning: close files, free memory, destroy codec instances
-
-    freeStatsArray(&sa);
-    if (glob_reader.file != NULL) {
-        fclose(glob_reader.file);
-    }
-    glob_reader.file = NULL;
-    glob_frame_counter = 0;
-    free(stats.buf);
-    // vpx_img_free(&raw);
-    // to be continued
-}
 
 void set_global_file_reader(const char *filename) {
     freeStatsArray(&sa);
@@ -221,9 +200,7 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       // add to stats array
       addStat(sa, *fps_stats);
     }
-
   }
-
   return got_pkts;
 }
 
@@ -294,6 +271,45 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   return stats;
 }
 
+// second pass to encode frames from stats
+static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
+                  const VpxInterface *encoder, const vpx_codec_enc_cfg_t *cfg,
+                  int max_frames) {
+  VpxVideoInfo info = { encoder->fourcc,
+                        cfg->g_w,
+                        cfg->g_h,
+                        { cfg->g_timebase.num, cfg->g_timebase.den } };
+  VpxVideoWriter *writer = NULL;
+  vpx_codec_ctx_t codec;
+  int frame_count = 0;
+
+  writer = vpx_video_writer_open(outfile_name, kContainerIVF, &info);
+  if (!writer) die("Failed to open %s for writing", outfile_name);
+
+  if (vpx_codec_enc_init(&codec, encoder->codec_interface(), cfg, 0))
+    die("Failed to initialize encoder");
+
+  // Encode frames.
+  while (vpx_img_read(raw, infile)) {
+    ++frame_count;
+    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer);
+
+    if (max_frames > 0 && frame_count >= max_frames) break;
+  }
+
+  // Flush encoder.
+  while (encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer)) {
+  }
+
+  printf("\n");
+
+  if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
+
+  vpx_video_writer_close(writer);
+
+  printf("Pass 1 complete. Processed %d frames.\n", frame_count);
+}
+
 StatsArray initialize_encoder(const char *infile, int width, int height) {
     set_global_file_reader(infile);
 
@@ -340,115 +356,27 @@ StatsArray initialize_encoder(const char *infile, int width, int height) {
     return sa;
 }
 
-// second pass to encode frames from stats
-static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
-                  const VpxInterface *encoder, const vpx_codec_enc_cfg_t *cfg,
-                  int max_frames) {
-  VpxVideoInfo info = { encoder->fourcc,
-                        cfg->g_w,
-                        cfg->g_h,
-                        { cfg->g_timebase.num, cfg->g_timebase.den } };
-  VpxVideoWriter *writer = NULL;
-  vpx_codec_ctx_t codec;
-  int frame_count = 0;
+EncodingResult encode_frame_external(int qp) {
+    // setting qp, performing encoding, and sending metrics back to python
+    EncodingResult result;
+    // result.psnr = calculate_psnr();
+    // result.bitrate = calculate_bitrate(); 
+    return result;
+}
 
-  writer = vpx_video_writer_open(outfile_name, kContainerIVF, &info);
-  if (!writer) die("Failed to open %s for writing", outfile_name);
-
-  if (vpx_codec_enc_init(&codec, encoder->codec_interface(), cfg, 0))
-    die("Failed to initialize encoder");
-
-  // Encode frames.
-  while (vpx_img_read(raw, infile)) {
-    ++frame_count;
-    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer);
-
-    if (max_frames > 0 && frame_count >= max_frames) break;
-  }
-
-  // Flush encoder.
-  while (encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer)) {
-  }
-
-  printf("\n");
-
-  if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
-
-  vpx_video_writer_close(writer);
-
-  printf("Pass 1 complete. Processed %d frames.\n", frame_count);
+void finalize_encoder(void) {
+    // memory cleaning: close files, free memory, destroy codec instances
+    freeStatsArray(&sa);
+    if (glob_reader.file != NULL) {
+        fclose(glob_reader.file);
+    }
+    glob_reader.file = NULL;
+    glob_frame_counter = 0;
+    free(stats.buf);
+    vpx_img_free(&raw);
 }
 
 int main() {
   printf("dummy print");
 }
 
-
-// int main(int argc, char **argv) {
-//   FILE *infile = NULL;
-//   int w, h;
-//   vpx_codec_ctx_t codec;
-//   vpx_codec_enc_cfg_t cfg;
-//   vpx_image_t raw;
-//   vpx_codec_err_t res;
-//   vpx_fixed_buf_t stats;
-
-//   const VpxInterface *encoder = NULL;
-//   const int fps = 30;       // TODO(dkovalev) add command line argument
-//   const int bitrate = 200;  // kbit/s TODO(dkovalev) add command line argument
-//   const char *const codec_arg = argv[1];
-//   const char *const width_arg = argv[2];
-//   const char *const height_arg = argv[3];
-//   const char *const infile_arg = argv[4];
-//   const char *const outfile_arg = argv[5];
-//   int max_frames = 0;
-//   exec_name = argv[0];
-//   StatsArray sa;
-
-//   if (argc != 7) die("Invalid number of arguments.");
-
-//   max_frames = (int)strtol(argv[6], NULL, 0);
-
-//   encoder = get_vpx_encoder_by_name(codec_arg);
-//   if (!encoder) die("Unsupported codec.");
-
-//   w = (int)strtol(width_arg, NULL, 0);
-//   h = (int)strtol(height_arg, NULL, 0);
-
-//   if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
-//     die("Invalid frame size: %dx%d", w, h);
-
-//   if (!vpx_img_alloc(&raw, VPX_IMG_FMT_I420, w, h, 1))
-//     die("Failed to allocate image (%dx%d)", w, h);
-
-//   printf("Using %s\n", vpx_codec_iface_name(encoder->codec_interface()));
-
-//   // Configuration
-//   res = vpx_codec_enc_config_default(encoder->codec_interface(), &cfg, 0);
-//   if (res) die_codec(&codec, "Failed to get default codec config.");
-
-//   cfg.g_w = w;
-//   cfg.g_h = h;
-//   cfg.g_timebase.num = 1;
-//   cfg.g_timebase.den = fps;
-//   cfg.rc_target_bitrate = bitrate;
-
-//   if (!(infile = fopen(infile_arg, "rb")))
-//     die("Failed to open %s for reading", infile_arg);
-
-//   // Pass 0
-//   cfg.g_pass = VPX_RC_FIRST_PASS;
-//   stats = pass0(&raw, infile, encoder, &cfg, max_frames, &sa);
-
-//   // Pass 1
-//   rewind(infile);
-//   cfg.g_pass = VPX_RC_LAST_PASS;
-//   cfg.rc_twopass_stats_in = stats;
-//   pass1(&raw, infile, outfile_arg, encoder, &cfg, max_frames);
-//   free(stats.buf);
-
-//   vpx_img_free(&raw);
-//   fclose(infile);
-
-//   return EXIT_SUCCESS;
-// }
