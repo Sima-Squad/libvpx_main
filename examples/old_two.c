@@ -109,6 +109,34 @@ typedef struct {
     size_t capacity;
 } StatsArray;
 
+
+static void addStat(StatsArray *sa, FIRSTPASS_STATS stat) {
+    if (sa->size == sa->capacity) {
+        sa->capacity *= 2;
+        sa->stats = (FIRSTPASS_STATS*) realloc(sa->stats, sa->capacity * sizeof(FIRSTPASS_STATS));
+    }
+    sa->stats[sa->size++] = stat;
+}
+
+static void removeStat(StatsArray *sa, size_t index) {
+    if (index < sa->size) {
+        for (size_t i = index; i < sa->size - 1; i++) {
+            sa->stats[i] = sa->stats[i + 1];
+        }
+        sa->size--;
+    }
+}
+
+static void initStatsArray(StatsArray *sa, size_t initialCapacity) {
+    sa->stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
+    sa->size = 0;
+    sa->capacity = initialCapacity;
+}
+
+static void freeStatsArray(StatsArray *sa) {
+    free(sa->stats);
+}
+
 typedef struct {
     int got_pkts;
     double psnr;
@@ -123,49 +151,28 @@ static double calculate_bitrate(void) {
   return 1.0;
 }
 
+// function prototypes for python interaction
+StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate);
+EncodingResult encode_frame_external(int qp);
+void finalize_encoder(void);
 StatsArray sa;
 
-static void initStatsArray(size_t initialCapacity) {
-    sa.stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
-    sa.size = 0;
-    sa.capacity = initialCapacity;
-}
-
-static void addStat(FIRSTPASS_STATS stat) {
-    if (sa.size == sa.capacity) {
-        sa.capacity *= 2;
-        sa.stats = (FIRSTPASS_STATS*) realloc(sa.stats, sa.capacity * sizeof(FIRSTPASS_STATS));
-    }
-    sa.stats[sa.size++] = stat;
-}
-
-static void removeStat(size_t index) {
-    if (index < sa.size) {
-        for (size_t i = index; i < sa.size - 1; i++) {
-            sa.stats[i] = sa.stats[i + 1];
-        }
-        sa.size--;
-    }
-}
-
-static void freeStatsArray() {
-    free(sa.stats);
-}
+int glob_frame_counter = 0;
 
 typedef struct {
     FILE *infile;
     vpx_codec_ctx_t codec;
     const VpxInterface *encoder;
-    vpx_image_t raw;
+    vpx_image_t *raw;
     vpx_codec_enc_cfg_t cfg;
     vpx_fixed_buf_t stats;
 } EncoderContext;
 
 EncoderContext enc_context = {NULL}; 
-int glob_frame_counter = 0;
+
 
 static void set_global_file_reader(const char *filename) {
-    freeStatsArray();
+    freeStatsArray(&sa);
     if (enc_context.infile != NULL) {
         fclose(enc_context.infile);
     }
@@ -181,7 +188,7 @@ static void set_global_file_reader(const char *filename) {
 static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                            vpx_codec_pts_t pts, unsigned int duration,
                            vpx_enc_frame_flags_t flags, unsigned int deadline,
-                           vpx_fixed_buf_t *stats) {
+                           vpx_fixed_buf_t *stats, StatsArray *sa) {
   int got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
@@ -207,10 +214,9 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
 
       // add to stats array
-      addStat(*fps_stats);
+      addStat(sa, *fps_stats);
     }
   }
-
   return got_pkts;
 }
 
@@ -260,7 +266,8 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 // first pass to collect stats 
 static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
                              const VpxInterface *encoder,
-                             const vpx_codec_enc_cfg_t *cfg, int max_frames) {
+                             const vpx_codec_enc_cfg_t *cfg, int max_frames, StatsArray *sa) {
+  printf("calling pass0 function");
   vpx_codec_ctx_t codec;
   int frame_count = 0;
   vpx_fixed_buf_t stats = { NULL, 0 };
@@ -272,20 +279,20 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
     get_frame_stats(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                    &stats);
+                    &stats, sa);
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
   // Flush encoder.
   while (get_frame_stats(&codec, NULL, frame_count, 1, 0, VPX_DL_GOOD_QUALITY,
-                         &stats)) {
+                         &stats, sa)) {
   }
 
   printf("Pass 0 complete. Processed %d frames.\n", frame_count);
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
 
   // remove the last stat as it is not a frame stat
-  removeStat(sa.size - 1);
+  removeStat(sa, sa->size - 1);
 
   return stats;
 }
@@ -316,7 +323,7 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
-  // flush encoder
+  // flush encoder 
   EncodingResult res;
   do {
     res = encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false, true);
@@ -325,7 +332,6 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("\n");
 
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
-
   vpx_video_writer_close(writer);
 
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
@@ -348,7 +354,7 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
     if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0)
         die("Invalid frame size: %dx%d", w, h);
 
-    if (!vpx_img_alloc(&enc_context.raw, VPX_IMG_FMT_I420, w, h, 1))
+    if (!vpx_img_alloc(enc_context.raw, VPX_IMG_FMT_I420, w, h, 1))
         die("Failed to allocate image (%dx%d)", w, h);
 
     printf("Using %s\n", vpx_codec_iface_name(enc_context.encoder->codec_interface()));
@@ -365,7 +371,7 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 
     // pass 0
     enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
-    enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0);
+    enc_context.stats = pass0(enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0, &sa);
 
     // setup for pass 1
     rewind(enc_context.infile);
@@ -378,11 +384,12 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 }
 
 
+
 EncodingResult encode_frame_external(int qp) {
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
     ++glob_frame_counter;
-    result = encode_frame(&enc_context.codec, &enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
+    result = encode_frame(&enc_context.codec, enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
     return result;
 }
 
@@ -399,7 +406,7 @@ void finalize_encoder(void) {
     enc_context.infile = NULL;
     glob_frame_counter = 0;
     free(enc_context.stats.buf);
-    vpx_img_free(&enc_context.raw);
+    vpx_img_free(enc_context.raw);
 
     // flush encoder -- CHECK writer param (before 32)
     EncodingResult res;
@@ -416,5 +423,5 @@ int main(int argc, char **argv) {
   const int height = (int)strtol(argv[3], NULL, 0);
   exec_name = argv[0];
   initialize_encoder(file_name, width, height, 200);
-  return 0;
 }
+
