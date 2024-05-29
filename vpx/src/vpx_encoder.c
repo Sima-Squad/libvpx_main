@@ -207,10 +207,6 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
     res = VPX_CODEC_INVALID_PARAM;
 #endif
   else {
-    // if (ctx->config.enc) {
-    //   printf("rc_min_quantizer = %d\n", ctx->config.enc->rc_min_quantizer);
-    //   printf("rc_max_quantizer = %d\n", ctx->config.enc->rc_max_quantizer);
-    // }
 
     unsigned int num_enc = ctx->priv->enc.total_encoders;
 

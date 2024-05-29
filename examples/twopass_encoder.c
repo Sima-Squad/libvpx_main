@@ -51,6 +51,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "vpx/vpx_encoder.h"
 
@@ -115,9 +116,25 @@ typedef struct {
     double bitrate;
 } EncodingResult;
 
-static double calculate_psnr(void) {
-  return 1.0;
+
+static double calculate_psnr(vpx_codec_ctx_t *ctx) {
+    vpx_codec_iter_t iter = NULL;
+    const vpx_codec_cx_pkt_t *pkt;
+    double total_psnr = 0.0;
+    double samples_total = 0;
+    
+    while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL) {
+        if (pkt->kind == VPX_CODEC_PSNR_PKT) {
+            samples_total += pkt->data.psnr.samples[0];
+            total_psnr += pkt->data.psnr.psnr[0];
+        }
+    }
+
+    printf("total psnr: %f, samples total: %f\n", total_psnr, samples_total);
+    double psnr = total_psnr / samples_total;
+    return psnr;
 }
+
 
 static double calculate_bitrate(void) {
   return 1.0;
@@ -228,7 +245,7 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
                         vpx_codec_pts_t pts, unsigned int duration,
                         vpx_enc_frame_flags_t flags, unsigned int deadline,
                         VpxVideoWriter *writer, int qp, bool set_qp, bool write_to_file) {
-  EncodingResult result = {0};
+  EncodingResult result;
   result.got_pkts = 0;
   vpx_codec_iter_t iter = NULL;
   const vpx_codec_cx_pkt_t *pkt = NULL;
@@ -260,7 +277,7 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
     } 
   }
 
-  result.psnr = calculate_psnr();
+  result.psnr = calculate_psnr(ctx);
   result.bitrate = calculate_bitrate(); 
 
   return result;
@@ -303,32 +320,33 @@ static vpx_fixed_buf_t pass0(vpx_image_t *raw, FILE *infile,
 static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
                   const VpxInterface *encoder, const vpx_codec_enc_cfg_t *cfg,
                   int max_frames) {
-  VpxVideoInfo info = { encoder->fourcc,
-                        cfg->g_w,
-                        cfg->g_h,
-                        { cfg->g_timebase.num, cfg->g_timebase.den } };
+  // VpxVideoInfo info = { encoder->fourcc,
+  //                       cfg->g_w,
+  //                       cfg->g_h,
+  //                       { cfg->g_timebase.num, cfg->g_timebase.den } };
   VpxVideoWriter *writer = NULL;
   vpx_codec_ctx_t codec;
   int frame_count = 0;
 
-  writer = vpx_video_writer_open(outfile_name, kContainerIVF, &info);
-  if (!writer) die("Failed to open %s for writing", outfile_name);
+  // writer = vpx_video_writer_open(outfile_name, kContainerIVF, &info);
+  // if (!writer) die("Failed to open %s for writing", outfile_name);
+
 
   if (vpx_codec_enc_init(&codec, encoder->codec_interface(), cfg, 0))
     die("Failed to initialize encoder");
 
+  EncodingResult res;
+
   // Encode frames.
   while (vpx_img_read(raw, infile)) {
     ++frame_count;
-    encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false, true);
+    res = encode_frame(&codec, raw, frame_count, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, true, false);
 
     if (max_frames > 0 && frame_count >= max_frames) break;
   }
 
-  // flush encoder
-  EncodingResult res;
   do {
-    res = encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, false, true);
+    res = encode_frame(&codec, NULL, -1, 1, 0, VPX_DL_GOOD_QUALITY, writer, 32, true, false);
   } while (res.got_pkts);
 
   printf("\n");
@@ -374,27 +392,27 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 
     // pass 0
     enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
-    printf("calling pass 0");
     enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0);
-    printf("Pass 0 complete. Processed %d frames.\n", glob_frame_counter);
 
     // setup for pass 1
     rewind(enc_context.infile);
     enc_context.cfg.g_pass = VPX_RC_LAST_PASS;
     enc_context.cfg.rc_twopass_stats_in = enc_context.stats;
-    if (vpx_codec_enc_init(&enc_context.codec, enc_context.encoder->codec_interface(), &enc_context.cfg, 0))
+    if (vpx_codec_enc_init(&enc_context.codec, enc_context.encoder->codec_interface(), &enc_context.cfg, VPX_CODEC_USE_PSNR))
         die("Failed to initialize encoder");
 
     return sa; 
 }
 
-
-
-
 EncodingResult encode_frame_external(int qp) {
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
     ++glob_frame_counter;
+    // read frame
+    if (!vpx_img_read(&enc_context.raw, enc_context.infile)) {
+        return result;
+    }
+
     result = encode_frame(&enc_context.codec, &enc_context.raw, glob_frame_counter, 1, 0, VPX_DL_GOOD_QUALITY, NULL, qp, true, false);
     return result;
 }
@@ -429,6 +447,15 @@ int main(int argc, char **argv) {
   const int height = (int)strtol(argv[3], NULL, 0);
   exec_name = argv[0];
   initialize_encoder(file_name, width, height, 200);
+  // pass1(&enc_context.raw, enc_context.infile, "output.ivf", enc_context.encoder, &enc_context.cfg, 0);
+  EncodingResult res;
+  // loop through frames
+  for (int i = 0; i < 100; i++) {
+    printf("Encoding frame %d\n", i);
+    res = encode_frame_external(32);
+    printf("PSNR: %f\n", res.psnr);
+  }
+  printf("global frame counter: %d\n", glob_frame_counter);
   return 0;
 }
 
