@@ -116,26 +116,6 @@ typedef struct {
     double bitrate;
 } EncodingResult;
 
-
-static double calculate_psnr(vpx_codec_ctx_t *ctx) {
-    vpx_codec_iter_t iter = NULL;
-    const vpx_codec_cx_pkt_t *pkt;
-    double total_psnr = 0.0;
-    double samples_total = 0;
-    
-    while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL) {
-        if (pkt->kind == VPX_CODEC_PSNR_PKT) {
-            samples_total += pkt->data.psnr.samples[0];
-            total_psnr += pkt->data.psnr.psnr[0];
-        }
-    }
-
-    printf("total psnr: %f, samples total: %f\n", total_psnr, samples_total);
-    double psnr = total_psnr / samples_total;
-    return psnr;
-}
-
-
 static double calculate_bitrate(void) {
   return 1.0;
 }
@@ -263,8 +243,8 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 
   while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL) {
     result.got_pkts = 1;
-    if (write_to_file) {
-      if (pkt->kind == VPX_CODEC_CX_FRAME_PKT) {
+    if (pkt->kind == VPX_CODEC_CX_FRAME_PKT) {
+      if (write_to_file) {
         const int keyframe = (pkt->data.frame.flags & VPX_FRAME_IS_KEY) != 0;
 
         if (!vpx_video_writer_write_frame(writer, pkt->data.frame.buf,
@@ -274,10 +254,13 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
         printf(keyframe ? "K" : ".");
         fflush(stdout);
       }
-    } 
+    } else {
+      if (pkt->kind == VPX_CODEC_PSNR_PKT) {
+        result.psnr = pkt->data.psnr.psnr[0];
+      }
+    }
   }
 
-  result.psnr = calculate_psnr(ctx);
   result.bitrate = calculate_bitrate(); 
 
   return result;
