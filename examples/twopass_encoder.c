@@ -124,6 +124,9 @@ static double calculate_bitrate(void) {
 }
 
 StatsArray sa;
+StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate);
+EncodingResult encode_frame_external(int qp);
+void finalize_encoder(void);
 
 static void initStatsArray(size_t initialCapacity) {
     sa.stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
@@ -149,8 +152,14 @@ static void removeStat(size_t index) {
 }
 
 static void freeStatsArray() {
-    free(sa.stats);
+  if (sa.stats != NULL) {
+      free(sa.stats);
+      sa.stats = NULL;
+  }
+  sa.size = 0;
+  sa.capacity = 0;
 }
+
 
 typedef struct {
     FILE *infile;
@@ -325,7 +334,6 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("\n");
 
   if (vpx_codec_destroy(&codec)) die_codec(&codec, "Failed to destroy codec.");
-
   vpx_video_writer_close(writer);
 
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
@@ -333,6 +341,7 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
 
 StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate) {
     set_global_file_reader(infile);
+    initStatsArray(100);
 
     int w, h;
     vpx_codec_err_t res;
@@ -356,7 +365,7 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
     // Configuration
     res = vpx_codec_enc_config_default(enc_context.encoder->codec_interface(), &enc_context.cfg, 0);
     if (res) die_codec(&enc_context.codec, "Failed to get default codec config.");
-    
+
     enc_context.cfg.g_w = w;
     enc_context.cfg.g_h = h;
     enc_context.cfg.g_timebase.num = 1;
@@ -365,7 +374,9 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 
     // pass 0
     enc_context.cfg.g_pass = VPX_RC_FIRST_PASS;
+    printf("calling pass 0");
     enc_context.stats = pass0(&enc_context.raw, enc_context.infile, enc_context.encoder, &enc_context.cfg, 0);
+    printf("Pass 0 complete. Processed %d frames.\n", glob_frame_counter);
 
     // setup for pass 1
     rewind(enc_context.infile);
@@ -374,8 +385,10 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
     if (vpx_codec_enc_init(&enc_context.codec, enc_context.encoder->codec_interface(), &enc_context.cfg, 0))
         die("Failed to initialize encoder");
 
-    return sa;
+    return sa; 
 }
+
+
 
 
 EncodingResult encode_frame_external(int qp) {
@@ -418,3 +431,5 @@ int main(int argc, char **argv) {
   initialize_encoder(file_name, width, height, 200);
   return 0;
 }
+
+
