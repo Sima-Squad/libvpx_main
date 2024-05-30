@@ -114,7 +114,9 @@ typedef struct {
     int got_pkts;
     double psnr;
     double bitrate;
+    int frame_type;
 } EncodingResult;
+
 
 static double calculate_bitrate(void) {
   return 1.0;
@@ -233,7 +235,7 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
   // controlling QP
   if (set_qp) {
     if (vpx_codec_control(ctx, VP8E_SET_CQ_LEVEL, qp)) {
-      fprintf(stderr, "Failed to set constant quantization level\n");
+      fprintf(stderr, "Failed to set quantization level\n");
     }
   }
 
@@ -253,7 +255,9 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
           die_codec(ctx, "Failed to write compressed frame.");
         printf(keyframe ? "K" : ".");
         fflush(stdout);
+        
       }
+      result.bitrate = pkt->data.frame.sz * 8;
     } else {
       if (pkt->kind == VPX_CODEC_PSNR_PKT) {
         result.psnr = pkt->data.psnr.psnr[0];
@@ -261,7 +265,7 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
     }
   }
 
-  result.bitrate = calculate_bitrate(); 
+  // result.bitrate = calculate_bitrate(); 
 
   return result;
 }
@@ -388,6 +392,7 @@ StatsArray initialize_encoder(const char *infile, int width, int height, int tar
 }
 
 EncodingResult encode_frame_external(int qp) {
+
     // setting qp, performing encoding, and sending metrics back to python
     EncodingResult result;
     ++glob_frame_counter;
@@ -437,6 +442,7 @@ int main(int argc, char **argv) {
     printf("Encoding frame %d\n", i);
     res = encode_frame_external(32);
     printf("PSNR: %f\n", res.psnr);
+    printf("Bitrate: %f\n", res.bitrate);
   }
   printf("global frame counter: %d\n", glob_frame_counter);
   return 0;
