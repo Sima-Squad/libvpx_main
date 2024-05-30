@@ -46,6 +46,7 @@ struct vpx_codec_alg_priv {
   vpx_codec_dec_cfg_t cfg;
   vp8_stream_info_t si;
   int decoder_init;
+  int some_val;
 #if CONFIG_MULTITHREAD
   // Restart threads on next frame if set to 1.
   // This is set when error happens in multithreaded decoding and all threads

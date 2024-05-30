@@ -65,6 +65,7 @@ extern "C" {
 #define VPX_CODEC_INTERNAL_ABI_VERSION (5) /**<\hideinitializer*/
 
 typedef struct vpx_codec_alg_priv vpx_codec_alg_priv_t;
+
 typedef struct vpx_codec_priv_enc_mr_cfg vpx_codec_priv_enc_mr_cfg_t;
 
 /*!\brief init function pointer prototype

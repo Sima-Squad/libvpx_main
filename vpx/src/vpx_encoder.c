@@ -23,7 +23,8 @@
 
 #define SAVE_STATUS(ctx, var) ((ctx) ? ((ctx)->err = (var)) : (var))
 
-static vpx_codec_alg_priv_t *get_alg_priv(vpx_codec_ctx_t *ctx) {
+
+static vpx_codec_alg_priv_t* get_alg_priv(vpx_codec_ctx_t *ctx) {
   return (vpx_codec_alg_priv_t *)ctx->priv;
 }
 
@@ -208,6 +209,7 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
 #endif
   else {
 
+    vpx_codec_alg_priv_t *priv_internal;
     unsigned int num_enc = ctx->priv->enc.total_encoders;
 
     /* Execute in a normalized floating point environment, if the platform
@@ -215,10 +217,15 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
      */
     FLOATING_POINT_INIT();
 
-    if (num_enc == 1)
-      res = ctx->iface->enc.encode(get_alg_priv(ctx), img, pts, duration, flags,
+    if (num_enc == 1) {
+
+      priv_internal = get_alg_priv(ctx);
+      res = ctx->iface->enc.encode(priv_internal, img, pts, duration, flags,
                                    deadline);
-    else {
+
+      
+
+    } else {
       /* Multi-resolution encoding:
        * Encode multi-levels in reverse order. For example,
        * if mr_total_resolutions = 3, first encode level 2,

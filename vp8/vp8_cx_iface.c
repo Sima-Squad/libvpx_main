@@ -96,6 +96,7 @@ struct vpx_codec_alg_priv {
   vpx_codec_pkt_list_decl(64) pkt_list;
   unsigned int fixed_kf_cntr;
   vpx_enc_frame_flags_t control_frame_flags;
+  int some_val;
 };
 
 // Called by vp8e_set_config() and vp8e_encode() only. Must not be called

@@ -243,6 +243,7 @@ static EncodingResult encode_frame(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       vpx_codec_encode(ctx, img, pts, duration, flags, deadline);
   if (res != VPX_CODEC_OK) die_codec(ctx, "Failed to encode frame.");
 
+
   while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL) {
     result.got_pkts = 1;
     if (pkt->kind == VPX_CODEC_CX_FRAME_PKT) {

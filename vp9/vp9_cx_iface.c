@@ -109,6 +109,8 @@ static struct vp9_extracfg default_extra_cfg = {
   0,                     // delta_q_uv
 };
 
+
+
 struct vpx_codec_alg_priv {
   vpx_codec_priv_t base;
   vpx_codec_enc_cfg_t cfg;
@@ -134,6 +136,7 @@ struct vpx_codec_alg_priv {
   BufferPool *buffer_pool;
   vpx_fixed_buf_t global_headers;
   int global_header_subsampling;
+  int some_val;
 };
 
 // Called by encoder_set_config() and encoder_encode() only. Must not be called
@@ -1324,6 +1327,7 @@ static vpx_codec_err_t encoder_encode(vpx_codec_alg_priv_t *ctx,
                                       unsigned long duration,
                                       vpx_enc_frame_flags_t enc_flags,
                                       vpx_enc_deadline_t deadline) {
+  // printf("activated encoder\n");
   volatile vpx_codec_err_t res = VPX_CODEC_OK;
   volatile vpx_enc_frame_flags_t flags = enc_flags;
   volatile vpx_codec_pts_t pts = pts_val;
@@ -1331,6 +1335,8 @@ static vpx_codec_err_t encoder_encode(vpx_codec_alg_priv_t *ctx,
   const vpx_rational64_t *const timebase_in_ts = &ctx->oxcf.g_timebase_in_ts;
   size_t data_sz;
   vpx_codec_cx_pkt_t pkt;
+  // set some val in ctx, passed back up chain
+  ctx->some_val = 42;
   memset(&pkt, 0, sizeof(pkt));
 
   if (cpi == NULL) return VPX_CODEC_INVALID_PARAM;
@@ -2276,7 +2282,7 @@ CODEC_INTERFACE(vpx_codec_vp9_cx) = {
       // NOLINT
       1,                           // 1 cfg map
       encoder_usage_cfg_map,       // vpx_codec_enc_cfg_map_t
-      encoder_encode,              // vpx_codec_encode_fn_t
+      encoder_encode,              // vpx_codec_encode_fn_t 
       encoder_get_cxdata,          // vpx_codec_get_cx_data_fn_t
       encoder_set_config,          // vpx_codec_enc_config_set_fn_t
       encoder_get_global_headers,  // vpx_codec_get_global_headers_fn_t
