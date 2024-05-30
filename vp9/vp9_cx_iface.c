@@ -136,7 +136,7 @@ struct vpx_codec_alg_priv {
   BufferPool *buffer_pool;
   vpx_fixed_buf_t global_headers;
   int global_header_subsampling;
-  int some_val;
+  // int some_val;
 };
 
 // Called by encoder_set_config() and encoder_encode() only. Must not be called
@@ -1336,7 +1336,7 @@ static vpx_codec_err_t encoder_encode(vpx_codec_alg_priv_t *ctx,
   size_t data_sz;
   vpx_codec_cx_pkt_t pkt;
   // set some val in ctx, passed back up chain
-  ctx->some_val = 42;
+  // ctx->some_val = 42;
   memset(&pkt, 0, sizeof(pkt));
 
   if (cpi == NULL) return VPX_CODEC_INVALID_PARAM;

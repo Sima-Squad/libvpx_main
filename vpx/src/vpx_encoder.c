@@ -23,7 +23,6 @@
 
 #define SAVE_STATUS(ctx, var) ((ctx) ? ((ctx)->err = (var)) : (var))
 
-
 static vpx_codec_alg_priv_t* get_alg_priv(vpx_codec_ctx_t *ctx) {
   return (vpx_codec_alg_priv_t *)ctx->priv;
 }
@@ -222,8 +221,6 @@ vpx_codec_err_t vpx_codec_encode(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       priv_internal = get_alg_priv(ctx);
       res = ctx->iface->enc.encode(priv_internal, img, pts, duration, flags,
                                    deadline);
-
-      
 
     } else {
       /* Multi-resolution encoding:

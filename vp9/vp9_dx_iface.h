@@ -32,7 +32,7 @@ struct vpx_codec_alg_priv {
   int last_show_frame;  // Index of last output frame.
   int byte_alignment;
   int skip_loop_filter;
-  int some_val;
+  // int some_val;
 
   int need_resync;  // wait for key/intra-only frame
   // BufferPool that holds all reference frames.
