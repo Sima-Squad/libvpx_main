@@ -119,12 +119,8 @@ typedef struct {
 } EncodingResult;
 
 
-static double calculate_bitrate(void) {
-  return 1.0;
-}
-
 StatsArray sa;
-StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate);
+StatsArray initialize_encoder(const char *infile, int width, int height, double fps_input, int target_bitrate);
 EncodingResult encode_frame_external(int qp);
 void finalize_encoder(void);
 
@@ -367,14 +363,14 @@ static void pass1(vpx_image_t *raw, FILE *infile, const char *outfile_name,
   printf("Pass 1 complete. Processed %d frames.\n", frame_count);
 }
 
-StatsArray initialize_encoder(const char *infile, int width, int height, int target_bitrate) {
+StatsArray initialize_encoder(const char *infile, int width, int height, double fps_input, int target_bitrate) {
     set_global_file_reader(infile);
     initStatsArray(100);
 
     int w, h;
     vpx_codec_err_t res;
     
-    const int fps = 30;
+    const double fps = fps_input;
     const char *const codec_arg = "vp9";
     w = width;
     h = height;
@@ -457,7 +453,7 @@ int main(int argc, char **argv) {
   const int width = (int)strtol(argv[2], NULL, 0);
   const int height = (int)strtol(argv[3], NULL, 0);
   exec_name = argv[0];
-  initialize_encoder(file_name, width, height, 200);
+  initialize_encoder(file_name, width, height, 30, 200);
   // pass1(&enc_context.raw, enc_context.infile, "output.ivf", enc_context.encoder, &enc_context.cfg, 0);
   EncodingResult res;
   // loop through frames
