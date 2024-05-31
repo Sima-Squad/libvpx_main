@@ -107,6 +107,7 @@ typedef struct {
 typedef struct {
     FIRSTPASS_STATS* stats;
     bool* is_key_logs;
+    bool* is_invis;
     size_t size;
     size_t capacity;
 } StatsArray;
@@ -131,18 +132,21 @@ void finalize_encoder(void);
 static void initStatsArray(size_t initialCapacity) {
     sa.stats = (FIRSTPASS_STATS*) malloc(initialCapacity * sizeof(FIRSTPASS_STATS));
     sa.is_key_logs = (bool*) malloc(initialCapacity * sizeof(bool));
+    sa.is_invis = (bool*) malloc(initialCapacity * sizeof(bool));
     sa.size = 0;
     sa.capacity = initialCapacity;
 }
 
-static void addStat(FIRSTPASS_STATS stat, bool is_key) {
+static void addStat(FIRSTPASS_STATS stat, bool is_key, bool is_invis) {
     if (sa.size == sa.capacity) {
         sa.capacity *= 2;
         sa.stats = (FIRSTPASS_STATS*) realloc(sa.stats, sa.capacity * sizeof(FIRSTPASS_STATS));
         sa.is_key_logs = (bool*) realloc(sa.is_key_logs, sa.capacity * sizeof(bool));
+        sa.is_invis = (bool*) realloc(sa.is_invis, sa.capacity * sizeof(bool));
     }
     sa.stats[sa.size] = stat;
     sa.is_key_logs[sa.size] = is_key;
+    sa.is_invis[sa.size] = is_invis;
     sa.size++;
 }
 
@@ -151,6 +155,7 @@ static void removeStat(size_t index) {
         for (size_t i = index; i < sa.size - 1; i++) {
             sa.stats[i] = sa.stats[i + 1];
             sa.is_key_logs[i] = sa.is_key_logs[i + 1];
+            sa.is_invis[i] = sa.is_invis[i + 1];
         }
         sa.size--;
     }
@@ -164,6 +169,10 @@ static void freeStatsArray() {
   if (sa.is_key_logs != NULL) {
       free(sa.is_key_logs);
       sa.is_key_logs = NULL;
+  }
+  if (sa.is_invis != NULL) {
+      free(sa.is_invis);
+      sa.is_invis = NULL;
   }
   sa.size = 0;
   sa.capacity = 0;
@@ -225,9 +234,10 @@ static int get_frame_stats(vpx_codec_ctx_t *ctx, const vpx_image_t *img,
       FIRSTPASS_STATS *fps_stats = (FIRSTPASS_STATS *)(pkt_buf);
 
       bool is_key = (pkt->data.frame.flags & VPX_FRAME_IS_KEY) ? 1 : 0;
+      bool is_invis = (pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) ? 1 : 0;
 
       // add to stats array
-      addStat(*fps_stats, is_key);
+      addStat(*fps_stats, is_key, is_invis);
     }
   }
 
