@@ -12,21 +12,25 @@
 
 #include "./vp8_rtcd.h"
 
+// @rushaan-m hard-coded basis functions for 4x4 DCT
+
 void vp8_short_fdct4x4_c(short *input, short *output, int pitch) {
   int i;
   int a1, b1, c1, d1;
   short *ip = input;
   short *op = output;
 
+  // row-wise transform 
   for (i = 0; i < 4; ++i) {
     a1 = ((ip[0] + ip[3]) * 8);
     b1 = ((ip[1] + ip[2]) * 8);
     c1 = ((ip[1] - ip[2]) * 8);
     d1 = ((ip[0] - ip[3]) * 8);
 
-    op[0] = a1 + b1;
-    op[2] = a1 - b1;
+    op[0] = a1 + b1; // DC coeff
+    op[2] = a1 - b1; // 2nd AC coeff
 
+    // scaling & rounding for other 2 coeff
     op[1] = (c1 * 2217 + d1 * 5352 + 14500) >> 12;
     op[3] = (d1 * 2217 - c1 * 5352 + 7500) >> 12;
 
